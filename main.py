@@ -8,8 +8,9 @@ from pyrogram import Client, filters, idle
 from pytgcalls import PyTgCalls
 from pytgcalls.types import MediaStream, AudioQuality
 
+
 # =========================
-# CONFIGURATION
+# ENVIRONMENT VARIABLES
 # =========================
 
 API_ID = int(os.environ["API_ID"])
@@ -17,8 +18,14 @@ API_HASH = os.environ["API_HASH"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 SESSION_STRING = os.environ["SESSION_STRING"]
 
+
+# =========================
+# DOWNLOAD DIRECTORY
+# =========================
+
 DOWNLOAD_DIR = Path("downloads")
-DOWNLOAD_DIR.mkdir(exist_ok=True)
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 
 # =========================
 # TELEGRAM CLIENTS
@@ -38,12 +45,17 @@ user = Client(
     session_string=SESSION_STRING,
 )
 
+
+# =========================
+# VOICE CHAT ENGINE
+# =========================
+
 calls = PyTgCalls(user)
 current_tracks = {}
 
 
 # =========================
-# AUDIO SEARCH
+# ONLINE AUDIO SEARCH
 # =========================
 
 def find_audio(query):
@@ -58,23 +70,28 @@ def find_audio(query):
     with yt_dlp.YoutubeDL(options) as ydl:
         info = ydl.extract_info(query, download=False)
 
-        if "entries" in info:
+        if info and "entries" in info:
             info = next(
                 (item for item in info["entries"] if item),
                 None,
             )
 
         if not info or not info.get("url"):
-            raise ValueError("No playable audio found.")
+            raise ValueError("No playable audio was found.")
 
         return info["url"], info.get("title", query)
 
+
+# =========================
+# PLAY TRACK
+# =========================
 
 async def start_track(chat_id, source, title):
     await calls.play(
         chat_id,
         MediaStream(source, AudioQuality.HIGH),
     )
+
     current_tracks[chat_id] = title
 
 
@@ -86,13 +103,15 @@ async def start_track(chat_id, source, title):
 async def start_command(_, message):
     await message.reply_text(
         "🎵 Welcome to Music Bot!\n\n"
-        "/play song name - Play online audio\n"
-        "/play (reply to audio) - Play Telegram audio\n"
+        "🎧 Music commands:\n"
+        "/play song name - Search and play online audio\n"
+        "/play - Reply to a Telegram audio file\n"
         "/pause - Pause music\n"
         "/resume - Resume music\n"
-        "/skip - Stop current track\n"
-        "/end - Stop and leave voice chat\n"
-        "/queue - Show current track"
+        "/skip - Stop the current track\n"
+        "/end - Stop music and leave the voice chat\n"
+        "/queue - Show the current track\n\n"
+        "Add the bot to your group and start a voice chat first."
     )
 
 
@@ -106,6 +125,7 @@ async def play_command(_, message):
     reply = message.reply_to_message
 
     try:
+        # Option 1: Play a replied-to Telegram audio file
         if reply and (
             reply.audio
             or reply.voice
@@ -126,7 +146,7 @@ async def play_command(_, message):
             )
 
             if not path:
-                raise ValueError("Failed to download audio.")
+                raise ValueError("Could not download the audio file.")
 
             title = (
                 getattr(media, "file_name", None)
@@ -135,15 +155,18 @@ async def play_command(_, message):
             )
 
             source = str(path)
+
             await status.delete()
 
+        # Option 2: Search online audio
         else:
             query = " ".join(message.command[1:]).strip()
 
             if not query:
                 await message.reply_text(
-                    "Usage: /play song name\n"
-                    "Or reply to an audio file with /play."
+                    "Usage:\n"
+                    "/play song name\n\n"
+                    "Or reply to a Telegram audio file with /play."
                 )
                 return
 
@@ -152,13 +175,17 @@ async def play_command(_, message):
             )
 
             source, title = await asyncio.to_thread(
-                find_audio, query
+                find_audio,
+                query,
             )
 
             await status.delete()
 
         await start_track(chat_id, source, title)
-        await message.reply_text(f"🎶 Now playing: {title}")
+
+        await message.reply_text(
+            f"🎶 Now playing: {title}"
+        )
 
     except Exception as exc:
         await message.reply_text(
@@ -175,6 +202,7 @@ async def pause_command(_, message):
     try:
         await calls.pause(message.chat.id)
         await message.reply_text("⏸️ Music paused.")
+
     except Exception as exc:
         await message.reply_text(
             f"❌ Pause failed: {str(exc)[:200]}"
@@ -190,6 +218,7 @@ async def resume_command(_, message):
     try:
         await calls.resume(message.chat.id)
         await message.reply_text("▶️ Music resumed.")
+
     except Exception as exc:
         await message.reply_text(
             f"❌ Resume failed: {str(exc)[:200]}"
@@ -205,9 +234,11 @@ async def skip_command(_, message):
     try:
         await calls.leave_call(message.chat.id)
         current_tracks.pop(message.chat.id, None)
+
         await message.reply_text(
-            "⏭️ Track stopped. Queue support is not enabled yet."
+            "⏭️ Current track stopped."
         )
+
     except Exception as exc:
         await message.reply_text(
             f"❌ Skip failed: {str(exc)[:200]}"
@@ -223,7 +254,11 @@ async def end_command(_, message):
     try:
         await calls.leave_call(message.chat.id)
         current_tracks.pop(message.chat.id, None)
-        await message.reply_text("⏹️ Music stopped.")
+
+        await message.reply_text(
+            "⏹️ Music stopped. Left the voice chat."
+        )
+
     except Exception as exc:
         await message.reply_text(
             f"❌ Stop failed: {str(exc)[:200]}"
@@ -239,39 +274,37 @@ async def queue_command(_, message):
     title = current_tracks.get(message.chat.id)
 
     if title:
-        await message.reply_text(f"🎵 Now playing: {title}")
+        await message.reply_text(
+            f"🎵 Now playing: {title}"
+        )
     else:
-        await message.reply_text("🎵 Nothing is playing.")
+        await message.reply_text(
+            "🎵 Nothing is playing."
+        )
 
 
 # =========================
-# STARTUP AND SHUTDOWN
+# START BOT
 # =========================
 
 async def main():
     print("Starting Telegram Music Bot...", flush=True)
 
+    await user.start()
+    print("Telegram user session started.", flush=True)
+
+    await bot.start()
+    print("Telegram bot started.", flush=True)
+
+    # PyTgCalls 3.x startup is synchronous
+    calls.start()
+    print("Voice chat engine started.", flush=True)
+
     try:
-        await user.start()
-        print("Telegram user session started.", flush=True)
-
-        await bot.start()
-        print("Telegram bot started.", flush=True)
-
-        await calls.start()
-        print("Voice chat engine started.", flush=True)
-
-        print("Bot is running and waiting for commands.", flush=True)
-
         await idle()
 
     finally:
         print("Stopping Music Bot...", flush=True)
-
-        try:
-            await calls.stop()
-        except Exception as exc:
-            print(f"Voice engine shutdown: {exc}", flush=True)
 
         try:
             await bot.stop()
