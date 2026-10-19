@@ -1,160 +1,48 @@
 import os
 import asyncio
-from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram import Client, idle
 from pytgcalls import PyTgCalls
-from pytgcalls.types import AudioPiped
-import yt_dlp
 
-import config
+# 1. Fetch and validate environment variables
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
+SESSION_STRING = os.environ.get("SESSION_STRING")
 
-# Initialize Pyrogram Clients
-bot = Client(
-    "MusicBot",
-    api_id=config.API_ID,
-    api_hash=config.API_HASH,
-    bot_token=config.BOT_TOKEN
+if not API_ID or not API_HASH or not SESSION_STRING:
+    raise ValueError("Missing required environment variables: API_ID, API_HASH, or SESSION_STRING.")
+
+# Convert API_ID to integer (crucial for Pyrogram)
+API_ID = int(API_ID)
+
+# 2. Initialize the Pyrogram User/Bot Client using the Session String
+app = Client(
+    name="NGS_Music_Bot",
+    api_id=31240366,
+    api_hash=c24e5f042bf1689e471c4f0288984a19,
+    session_string=BQHcsK4AXZbXeuV2K_R6QFxQQkg4FY4JgYL8lWOt6yk8mxW9l0DP0YcKnFtGRjmR4lH4cJd7e62sigbhB8IbODGoL9BqG4shaGv_Y5_j2zPBSuuMkjujWD8N1VbJn3QS66hX4xxy6ESVun1EjBmm4mSTStEbwBBpYM1XKkzD6RjiCYAORoSabXDWZl5A4F_0pwi5m1Pd1q_L7PA__mw9g1st_K8kY9Hky4jHFfJzMEON4vzAfXzuQW7GpDqIdnWV_u1pBnJCGEANm0NZoqLG-OReNetW1Z_fnosc0FRqj0hHJezqL1nhtVx2Ahj3ParwE7o7ZknR2P95mAL1dXYOuHdPthpXswAAAAG7ZHk-AA
 )
 
-user = Client(
-    "MusicAssistant",
-    api_id=config.API_ID,
-    api_hash=config.API_HASH,
-    session_string=config.SESSION_STRING
-)
-
-# Initialize PyTgCalls Engine
-call_py = PyTgCalls(user)
-
-# Active queues per chat: {chat_id: [{"title": str, "url": str}]}
-queues = {}
-
-
-def fetch_audio_url(query: str) -> tuple[str, str]:
-    """Search YouTube and extract raw stream URL using yt-dlp."""
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "default_search": "ytsearch1",
-        "quiet": True,
-        "no_warnings": True,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=False)
-        if "entries" in info:
-            info = info["entries"][0]
-        return info["url"], info.get("title", "Unknown Track")
-
-
-@bot.on_message(filters.command("start"))
-async def start_cmd(_, message: Message):
-    await message.reply_text(
-        "🎶 **Telegram VC Music Bot Active!**\n\n"
-        "**Available Commands:**\n"
-        "• `/play <song name/link>` - Play audio in Group VC\n"
-        "• `/pause` - Pause audio stream\n"
-        "• `/resume` - Resume audio stream\n"
-        "• `/skip` - Skip current track\n"
-        "• `/stop` - Stop audio & leave VC"
-    )
-
-
-@bot.on_message(filters.command("play") & filters.group)
-async def play_cmd(_, message: Message):
-    chat_id = message.chat.id
-
-    if len(message.command) < 2:
-        await message.reply_text("❌ Please provide a song name or link!\nExample: `/play Faded`")
-        return
-
-    query = message.text.split(maxsplit=1)[1]
-    msg = await message.reply_text("🔎 **Searching track...**")
-
-    loop = asyncio.get_event_loop()
-    try:
-        stream_url, title = await loop.run_in_executor(None, fetch_audio_url, query)
-    except Exception as e:
-        await msg.edit_text(f"❌ Failed to fetch track: `{str(e)}`")
-        return
-
-    if chat_id not in queues:
-        queues[chat_id] = []
-
-    queues[chat_id].append({"title": title, "url": stream_url})
-
-    if len(queues[chat_id]) > 1:
-        await msg.edit_text(f"➕ **Queued at position #{len(queues[chat_id])}:** `{title}`")
-        return
-
-    try:
-        await call_py.join_group_call(
-            chat_id,
-            AudioPiped(stream_url)
-        )
-        await msg.edit_text(f"▶️ **Now Playing:** `{title}`")
-    except Exception as e:
-        queues[chat_id].pop(0)
-        await msg.edit_text(f"❌ Error joining VC: `{str(e)}`\nMake sure VC is active in this group!")
-
-
-@bot.on_message(filters.command("skip") & filters.group)
-async def skip_cmd(_, message: Message):
-    chat_id = message.chat.id
-
-    if chat_id not in queues or not queues[chat_id]:
-        await message.reply_text("❌ Nothing is currently playing.")
-        return
-
-    queues[chat_id].pop(0)
-
-    if queues[chat_id]:
-        next_track = queues[chat_id][0]
-        await call_py.change_stream(chat_id, AudioPiped(next_track["url"]))
-        await message.reply_text(f"⏭️ **Skipped! Now Playing:** `{next_track['title']}`")
-    else:
-        await call_py.leave_group_call(chat_id)
-        await message.reply_text("🏁 **Queue finished. Left voice chat.**")
-
-
-@bot.on_message(filters.command("pause") & filters.group)
-async def pause_cmd(_, message: Message):
-    chat_id = message.chat.id
-    try:
-        await call_py.pause_stream(chat_id)
-        await message.reply_text("⏸️ **Playback Paused.**")
-    except Exception:
-        await message.reply_text("❌ No active stream found.")
-
-
-@bot.on_message(filters.command("resume") & filters.group)
-async def resume_cmd(_, message: Message):
-    chat_id = message.chat.id
-    try:
-        await call_py.resume_stream(chat_id)
-        await message.reply_text("▶️ **Playback Resumed.**")
-    except Exception:
-        await message.reply_text("❌ No active stream paused.")
-
-
-@bot.on_message(filters.command("stop") & filters.group)
-async def stop_cmd(_, message: Message):
-    chat_id = message.chat.id
-    if chat_id in queues:
-        queues[chat_id].clear()
-
-    try:
-        await call_py.leave_group_call(chat_id)
-        await message.reply_text("⏹️ **Stopped playback & left Voice Chat.**")
-    except Exception:
-        await message.reply_text("❌ Bot is not in VC.")
-
+# 3. Initialize PyTgCalls for Voice Chat streaming
+call_py = PyTgCalls(app)
 
 async def main():
-    await user.start()
-    await bot.start()
+    print("Starting Pyrogram Client...")
+    await app.start()
+    
+    print("Starting PyTgCalls Voice Chat handler...")
     await call_py.start()
-    print("🚀 Music Bot Started Successfully!")
-    await asyncio.Event().wait()
-
+    
+    print("NGS-Music-BOT is successfully running and online!")
+    
+    # Keeps the script alive and listening for telegram events/commands
+    await idle()
+    
+    # Graceful shutdown
+    print("Stopping bot...")
+    await app.stop()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot stopped manually.")
