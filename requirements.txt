@@ -1,5 +1,5 @@
 
-py-tgcalls[pyrogram]
-pyrogrammod>=2.1.2
+pyrogrammod==2.4.1
+py-tgcalls[pyrogram]==3.0.0
 tgcrypto
 yt-dlp
