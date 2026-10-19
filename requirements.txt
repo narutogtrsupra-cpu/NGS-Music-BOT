@@ -1,5 +1,5 @@
 
-pyrogram
+py-tgcalls[pyrogram]
+pyrogrammod>=2.1.2
 tgcrypto
-py-tgcalls
 yt-dlp
